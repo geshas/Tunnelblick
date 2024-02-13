@@ -29,6 +29,20 @@ trim()
 echo ${@}
 }
 
+
+enable_ipv6_forAll() {
+    services=$(networksetup -listallnetworkservices | grep -v "^*")
+    
+    while IFS= read -r service; do
+        if [[ ! "$service" =~ ^(An asterisk|[*]{2}|Processing service:) ]]; then
+            echo "IPv6 - $service"
+            sudo networksetup -setv6automatic "$service"
+        fi
+    done <<< "$services"
+
+    echo "IPv6 has been enabled for the listed network interfaces."
+}
+
 ##########################################################################################
 restore_networksetup_setting() {
 
@@ -224,11 +238,6 @@ readonly OUR_NAME=$(basename "${0}")
 logMessage "**********************************************"
 logMessage "Start of output from ${OUR_NAME}"
 
-# Remove the flag file that indicates we need to run the down script
-
-if [ -e   "/Library/Coro/RunShield/DB/downscript-needs-to-be-run.txt" ] ; then
-    rm -f "/Library/Coro/RunShield/DB/downscript-needs-to-be-run.txt"
-fi
 
 # Test for the "-r" Tunnelbick option (Reset primary interface after disconnecting) because we _always_ need its value.
 # Usually we get the value for that option (and the other options) from State:/Network/OpenVPN,
@@ -450,8 +459,6 @@ restore_ipv6 "$sRestoreIpv6Services"
 
 flushDNSCache
 
-logMessage "XXX"
-
 # Remove our system configuration data
 scutil <<-EOF
     open
@@ -474,7 +481,7 @@ do
     networksetup -setnetworkserviceenabled "$interface" on
 done
 
-
+enable_ipv6_forAll
 
 logMessage "End of output from ${OUR_NAME}"
 logMessage "**********************************************"

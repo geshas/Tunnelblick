@@ -260,6 +260,20 @@ disable_ipv6() {
     done
 }
 
+
+disable_ipv6_forAll() {
+    services=$(networksetup -listallnetworkservices | grep -v "^*")
+    
+    while IFS= read -r service; do
+        if [[ ! "$service" =~ ^(An asterisk|[*]{2}|Processing service:) ]]; then
+            echo "Disabling IPv6 for service: $service"
+            networksetup -setv6off "$service"
+        fi
+    done <<< "$services"
+    
+    echo "IPv6 has been disabled for the listed network interfaces."
+}
+
 ##########################################################################################
 # @param String[] dnsServers - The name servers to use
 # @param String domainName - The domain name to use
@@ -1265,8 +1279,8 @@ flushDNSCache()
 # @param String New DNS_SA
 logDnsInfo() {
 
-    readonly local log_dns_info_manual_dns_sa="$1"
-    readonly local log_dns_info_new_dns_sa="$2"
+    local log_dns_info_manual_dns_sa="$1"
+    local log_dns_info_new_dns_sa="$2"
 
     if [ "${log_dns_info_manual_dns_sa}" != "" -a "${ARG_OVERRIDE_MANUAL_NETWORK_SETTINGS}" = "false"  ] ; then
         logMessage "DNS servers '${log_dns_info_manual_dns_sa}' were set manually"
@@ -1281,12 +1295,12 @@ logDnsInfo() {
             logMessage "NOTE: DNS server 127.0.0.1 often is used inside virtual machines (e.g., 'VirtualBox', 'Parallels', or 'VMWare'). The actual VPN server may be specified by the host machine. This DNS server setting may cause DNS queries to fail or be intercepted or falsified. Specify only known public DNS servers or DNS servers located on the VPN network to avoid such problems."
         else
             set +e # "grep" will return error status (1) if no matches are found, so don't fail on individual errors
-                readonly local serversContainLoopback="$( echo "${log_dns_info_new_dns_sa}" | grep "127.0.0.1" )"
+                local serversContainLoopback="$( echo "${log_dns_info_new_dns_sa}" | grep "127.0.0.1" )"
             set -e # We instruct bash that it CAN again fail on errors
             if [ "${serversContainLoopback}" != "" ] ; then
                 logMessage "NOTE: DNS server 127.0.0.1 often is used inside virtual machines (e.g., 'VirtualBox', 'Parallels', or 'VMWare'). The actual VPN server may be specified by the host machine. If used, 127.0.0.1 may cause DNS queries to fail or be intercepted or falsified. Specify only known public DNS servers or DNS servers located on the VPN network to avoid such problems."
             else
-                readonly local knownPublicDnsServers="$( cat "${FREE_PUBLIC_DNS_SERVERS_LIST_PATH}" )"
+                local knownPublicDnsServers="$( cat "${FREE_PUBLIC_DNS_SERVERS_LIST_PATH}" )"
                 knownDnsServerNotFound="true"
                 unknownDnsServerFound="false"
                 for server in ${log_dns_info_new_dns_sa} ; do
@@ -1328,19 +1342,19 @@ EOF
 grep PrimaryService | sed -e 's/.*PrimaryService : //'
 )"
 
-    readonly local LOGDNSINFO_MAN_DNS_CONFIG="$( get_scutil_item Setup:/Network/Service/${PSID}/DNS )"
-    readonly local LOGDNSINFO_CUR_DNS_CONFIG="$( get_scutil_item State:/Network/Global/DNS )"
+    local LOGDNSINFO_MAN_DNS_CONFIG="$( get_scutil_item Setup:/Network/Service/${PSID}/DNS )"
+    local LOGDNSINFO_CUR_DNS_CONFIG="$( get_scutil_item State:/Network/Global/DNS )"
 
     if echo "${LOGDNSINFO_MAN_DNS_CONFIG}" | grep -q "ServerAddresses" ; then
-        readonly LOGDNSINFO_MAN_DNS_SA="$( trim "$( echo "${LOGDNSINFO_MAN_DNS_CONFIG}" | sed -e 's/^.*ServerAddresses[^{]*{[[:space:]]*\([^}]*\)[[:space:]]*}.*$/\1/g' )" )"
+        LOGDNSINFO_MAN_DNS_SA="$( trim "$( echo "${LOGDNSINFO_MAN_DNS_CONFIG}" | sed -e 's/^.*ServerAddresses[^{]*{[[:space:]]*\([^}]*\)[[:space:]]*}.*$/\1/g' )" )"
     else
-        readonly LOGDNSINFO_MAN_DNS_SA="";
+        LOGDNSINFO_MAN_DNS_SA="";
     fi
 
     if echo "${LOGDNSINFO_CUR_DNS_CONFIG}" | grep -q "ServerAddresses" ; then
-        readonly local LOGDNSINFO_CUR_DNS_SA="$( trim "$( echo "${LOGDNSINFO_CUR_DNS_CONFIG}" | sed -e 's/^.*ServerAddresses[^{]*{[[:space:]]*\([^}]*\)[[:space:]]*}.*$/\1/g' )" )"
+        local LOGDNSINFO_CUR_DNS_SA="$( trim "$( echo "${LOGDNSINFO_CUR_DNS_CONFIG}" | sed -e 's/^.*ServerAddresses[^{]*{[[:space:]]*\([^}]*\)[[:space:]]*}.*$/\1/g' )" )"
     else
-        readonly local LOGDNSINFO_CUR_DNS_SA="";
+        local LOGDNSINFO_CUR_DNS_SA="";
     fi
 
     set -e # resume abort on error
@@ -1575,7 +1589,6 @@ if ${ARG_TAP} ; then
         logDebugMessage "DEBUG: bRouteGatewayIsDhcp is TRUE"
         if [ -z "$dev" ]; then
             logMessage "ERROR: Cannot configure TAP interface for DHCP without \$dev being defined. Exiting."
-            # We don't create the "/Library/Coro/RunShield/DB/downscript-needs-to-be-run.txt" file, because the down script does NOT need to be run since we didn't do anything
             logMessage "End of output from ${OUR_NAME}"
             logMessage "**********************************************"
             exit 1
@@ -1623,34 +1636,14 @@ else
         if ${ARG_MONITOR_NETWORK_CONFIGURATION} ; then
             logMessage "WARNING: Will NOT monitor for other network configuration changes."
         fi
-        if ${ARG_DISABLE_IPV6_ON_TUN} ; then
-            logMessage "WARNING: Will NOT disable IPv6 settings."
-        fi
         logDnsInfoNoChanges
         flushDNSCache
-    else
-
-        ipv6_disabled_services=""
-        if ${ARG_DISABLE_IPV6_ON_TUN} ; then
-            ipv6_disabled_services="$( disable_ipv6 )"
-            if [ "$ipv6_disabled_services" != "" ] ; then
-                printf %s "$ipv6_disabled_services
-" | \
-                while IFS= read -r dipv6_service ; do
-                    logMessage "Disabled IPv6 for '$dipv6_service'"
-                done
-            fi
-        fi
-        readonly ipv6_disabled_services
-        # Note '\n' is translated into '\t' so it is all on one line, because grep and sed only work with single lines
-        readonly ipv6_disabled_services_encoded="$( echo "$ipv6_disabled_services" | tr '\n' '\t' )"
-
-        configureOpenVpnDns
-        EXIT_CODE=$?
     fi
 fi
 
-touch "/Library/Coro/RunShield/DB/downscript-needs-to-be-run.txt"
+
+disable_ipv6_forAll
+configureOpenVpnDns
 
 logMessage "End of output from ${OUR_NAME}"
 logMessage "**********************************************"
